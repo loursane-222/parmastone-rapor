@@ -13,18 +13,12 @@ export default function GirisPage() {
     e.preventDefault()
     setYukleniyor(true)
     setHata('')
-    
-    const { data, error } = await supabase.auth.signInWithPassword({ 
-      email, 
-      password: sifre 
-    })
-    
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: sifre })
     if (error) {
       setHata('Giriş başarısız: ' + error.message)
       setYukleniyor(false)
       return
     }
-
     if (data.session) {
       window.location.replace('/dashboard')
     }
@@ -35,9 +29,18 @@ export default function GirisPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/10 backdrop-blur mb-4">
-            <span className="text-2xl font-bold text-white">S</span>
+            <div style={{
+              color: 'white',
+              fontSize: '8px',
+              fontWeight: 800,
+              letterSpacing: '1px',
+              lineHeight: '1.3',
+              textAlign: 'center',
+            }}>
+              PARMA<br/>STONE
+            </div>
           </div>
-          <h1 className="text-2xl font-bold text-white mb-1">Slab CRM</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">Parmastone Rapor</h1>
           <p className="text-brand-200 text-sm">Bölge Satış Yönetim Sistemi</p>
         </div>
         <div className="bg-white rounded-2xl shadow-2xl p-8">
@@ -57,7 +60,7 @@ export default function GirisPage() {
             </button>
           </form>
         </div>
-        <p className="text-center text-brand-300 text-xs mt-6">Laminam Türkiye — Ege Bölgesi © 2024</p>
+        <p className="text-center text-brand-300 text-xs mt-6">Parmastone — Ege Bölgesi © 2025</p>
       </div>
     </div>
   )
