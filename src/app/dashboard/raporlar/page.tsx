@@ -11,13 +11,13 @@ export default function RaporlarPage() {
   const [projeler, setProjeler] = useState<any[]>([])
   const [kalemler, setKalemler] = useState<any[]>([])
   const [yukleniyor, setYukleniyor] = useState(true)
-  const [aktifSekme, setAktifSekme] = useState<'genel'|'kullanim'|'marka'|'kalinlik'|'durum'>('genel')
+  const [aktifSekme, setAktifSekme] = useState<'genel'|'kullanim'|'fiyat'|'marka'|'kalinlik'|'durum'>('genel')
   const supabase = createClient()
 
   useEffect(() => {
     Promise.all([
       supabase.from('projects').select('*'),
-      supabase.from('project_items').select('*, project:projects(proje_adi, guncel_durum)'),
+      supabase.from('project_items').select('*, project:projects(proje_adi, guncel_durum, kaybedilen_marka)'),
     ]).then(([p, k]) => {
       setProjeler(p.data || [])
       setKalemler(k.data || [])
@@ -51,18 +51,58 @@ export default function RaporlarPage() {
     return { alan, sayi: alanKalemleri.length, metraj: topMetraj, ciro: topCiro, kalinlikDagilim }
   }).filter(a => a.sayi > 0).sort((a, b) => b.metraj - a.metraj)
 
-  // Marka bazlı analiz
+  // Fiyat ortalaması analizi
+  const fiyatAnaliz = KALINLIKLAR.map(kal => {
+    const tumKalemler = kalemler.filter(k => k.kalinlik === kal && k.birim_fiyat > 0)
+    const kazanilanKalemler = kalemler.filter(k => k.kalinlik === kal && k.birim_fiyat > 0 && k.project?.guncel_durum === 'kazanildi')
+    const kaybedilenKalemler = kalemler.filter(k => k.kalinlik === kal && k.birim_fiyat > 0 && k.project?.guncel_durum === 'kaybedildi')
+    const devamKalemler = kalemler.filter(k => k.kalinlik === kal && k.birim_fiyat > 0 && !['kazanildi','kaybedildi','iptal'].includes(k.project?.guncel_durum || ''))
+
+    const ort = (liste: any[]) => liste.length > 0 ? liste.reduce((t, k) => t + k.birim_fiyat, 0) / liste.length : null
+    const min = (liste: any[]) => liste.length > 0 ? Math.min(...liste.map(k => k.birim_fiyat)) : null
+    const max = (liste: any[]) => liste.length > 0 ? Math.max(...liste.map(k => k.birim_fiyat)) : null
+
+    // Rakip marka bazında kaybedilen fiyatlar
+    const markaFiyat = ['Dekton','Neolith','Atlas','Materia','Infinity','Level','Kale','Doğaltaş','Diğer'].map(marka => {
+      const markaKalemler = kalemler.filter(k => k.kalinlik === kal && k.birim_fiyat > 0 && k.project?.guncel_durum === 'kaybedildi' && k.project?.kaybedilen_marka === marka)
+      return { marka, ort: ort(markaKalemler), sayi: markaKalemler.length }
+    }).filter(m => m.sayi > 0)
+
+    return {
+      kalinlik: kal,
+      genelOrt: ort(tumKalemler),
+      genelMin: min(tumKalemler),
+      genelMax: max(tumKalemler),
+      kazanilanOrt: ort(kazanilanKalemler),
+      kaybedilenOrt: ort(kaybedilenKalemler),
+      devamOrt: ort(devamKalemler),
+      tumSayi: tumKalemler.length,
+      kazanilanSayi: kazanilanKalemler.length,
+      kaybedilenSayi: kaybedilenKalemler.length,
+      markaFiyat,
+    }
+  }).filter(k => k.tumSayi > 0)
+
+  // Kullanım alanı + kalınlık fiyat matrisi
+  const fiyatMatrisi = KULLANIM_ALANLARI.map(alan => {
+    const satir: Record<string, number|null> = { alan: 0 }
+    KALINLIKLAR.forEach(kal => {
+      const liste = kalemler.filter(k => k.kullanim_alani === alan && k.kalinlik === kal && k.birim_fiyat > 0)
+      satir[kal] = liste.length > 0 ? liste.reduce((t, k) => t + k.birim_fiyat, 0) / liste.length : null
+    })
+    return { alan, ...satir }
+  }).filter(s => KALINLIKLAR.some(k => s[k] !== null))
+
+  // Marka analizi
   const markaKazanim = ['Dekton','Neolith','Atlas','Materia','Infinity','Level','Saime','Massimo','Lamar','Inalco','Florim','Kale','Kütahya','Anatolia','Maxtone','Kuvars','Doğaltaş','Diğer'].map(marka => {
     const markaKayip = kaybedilen.filter(p => p.kaybedilen_marka === marka)
     return { marka, kayipSayi: markaKayip.length, kayipMetraj: markaKayip.reduce((t,p)=>t+(p.metraj||0),0), kayipCiro: markaKayip.reduce((t,p)=>t+(p.pot_ciro||0),0) }
   }).filter(m => m.kayipSayi > 0).sort((a,b) => b.kayipSayi - a.kayipSayi)
 
-  // Kalınlık bazlı
+  // Kalınlık analizi
   const kalinlikAnaliz = KALINLIKLAR.map(k => {
     const kKalemler = kalemler.filter(item => item.kalinlik === k)
-    const kKaz = kazanilan.filter(p => p.kalinlik === k)
-    const kKayb = kaybedilen.filter(p => p.kalinlik === k)
-    return { kalinlik: k, sayi: kKalemler.length, kazanilan: kKaz.length, kaybedilen: kKayb.length, metraj: kKalemler.reduce((t,i)=>t+(i.metraj||0),0), ciro: kKalemler.reduce((t,i)=>t+(i.toplam||0),0) }
+    return { kalinlik: k, sayi: kKalemler.length, metraj: kKalemler.reduce((t,i)=>t+(i.metraj||0),0), ciro: kKalemler.reduce((t,i)=>t+(i.toplam||0),0) }
   }).filter(k => k.sayi > 0)
   const tumKalinlikMetraj = kalinlikAnaliz.reduce((t,k)=>t+k.metraj,0)
 
@@ -73,11 +113,13 @@ export default function RaporlarPage() {
     { durum: 'beklemede', renk: 'bg-gray-400' }, { durum: 'iptal', renk: 'bg-gray-300' },
   ]
 
+  const fmtFiyat = (n: number|null) => n ? `€${n.toFixed(0)}/m²` : '—'
+
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Raporlar ve Pazar Analizi</h1>
-        <p className="text-slate-500 text-sm mt-1">Tüm projeler, kullanım alanı, marka ve kalınlık dağılımı</p>
+        <p className="text-slate-500 text-sm mt-1">Tüm projeler, kullanım alanı, fiyat, marka ve kalınlık dağılımı</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -98,8 +140,8 @@ export default function RaporlarPage() {
         {[
           { b: 'Kazanılan Proje', d: kazanilan.length, r: 'text-green-700', alt: formatEuro(kazanilanCiro) },
           { b: 'Kazanılan Metraj', d: `${kazanilanMetraj.toLocaleString('tr-TR')} m²`, r: 'text-green-700', alt: '' },
-          { b: 'Kaybedilen Proje', d: kaybedilen.length, r: 'text-red-700', alt: `${kaybedilen.reduce((t,p)=>t+(p.metraj||0),0).toLocaleString('tr-TR')} m²` },
-          { b: 'Devam Eden', d: devamEden.length, r: 'text-blue-700', alt: `${devamEden.reduce((t,p)=>t+(p.metraj||0),0).toLocaleString('tr-TR')} m²` },
+          { b: 'Kaybedilen Proje', d: kaybedilen.length, r: 'text-red-700', alt: '' },
+          { b: 'Devam Eden', d: devamEden.length, r: 'text-blue-700', alt: '' },
         ].map((k,i) => (
           <div key={i} className="card p-5">
             <p className="text-xs text-slate-500 mb-1">{k.b}</p>
@@ -110,7 +152,7 @@ export default function RaporlarPage() {
       </div>
 
       <div className="flex gap-2 mb-6 flex-wrap">
-        {[['genel','📊 Genel Durum'],['kullanim','🏠 Kullanım Alanları'],['marka','🏷️ Marka Analizi'],['kalinlik','📐 Kalınlık Analizi'],['durum','🔄 Durum Dağılımı']].map(([id, etiket]) => (
+        {[['genel','📊 Genel'],['kullanim','🏠 Kullanım Alanları'],['fiyat','💶 Fiyat Ortalamaları'],['marka','🏷️ Marka Analizi'],['kalinlik','📐 Kalınlık'],['durum','🔄 Durum']].map(([id, etiket]) => (
           <button key={id} onClick={() => setAktifSekme(id as any)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${aktifSekme === id ? 'bg-brand-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}>
             {etiket}
@@ -162,20 +204,20 @@ export default function RaporlarPage() {
         <div className="space-y-6">
           <div className="card p-6">
             <h2 className="font-semibold text-slate-800 mb-2">Kullanım Alanı Bazlı Analiz</h2>
-            <p className="text-sm text-slate-500 mb-4">Proje kalemlerinden gelen tüm kullanım alanlarının metraj, ciro ve kalınlık dağılımı</p>
+            <p className="text-sm text-slate-500 mb-4">Tüm proje kalemlerinin kullanım alanına göre metraj, ciro ve kalınlık dağılımı</p>
             {kullanımAnaliz.length === 0 ? (
-              <p className="text-center py-8 text-slate-400">Henüz kullanım alanı verisi yok — proje eklerken kullanım alanı girin</p>
+              <p className="text-center py-8 text-slate-400">Henüz kullanım alanı verisi yok</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100">
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kullanım Alanı</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalem Sayısı</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalem</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Toplam Metraj</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Metraj Payı %</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Pay %</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Toplam Ciro</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalınlık Dağılımı</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalınlıklar</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -198,9 +240,7 @@ export default function RaporlarPage() {
                           <td className="px-4 py-3">
                             <div className="flex gap-1 flex-wrap">
                               {a.kalinlikDagilim.map(k => (
-                                <span key={k.kalinlik} className="badge bg-brand-100 text-brand-800 text-xs">
-                                  {k.kalinlik}: {k.metraj.toLocaleString('tr-TR')}m²
-                                </span>
+                                <span key={k.kalinlik} className="badge bg-brand-100 text-brand-800 text-xs">{k.kalinlik}: {k.metraj.toLocaleString('tr-TR')}m²</span>
                               ))}
                             </div>
                           </td>
@@ -220,37 +260,116 @@ export default function RaporlarPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          <div className="grid grid-cols-3 gap-4">
-            {kullanımAnaliz.map(a => {
-              const yuzde = toplamMetraj > 0 ? Math.round((a.metraj/toplamMetraj)*100) : 0
-              return (
-                <div key={a.alan} className="card p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-semibold text-slate-800">{a.alan}</h3>
-                    <span className="text-xl font-bold text-brand-700">%{yuzde}</span>
-                  </div>
-                  <div className="w-full bg-slate-100 rounded-full h-2 mb-3">
-                    <div className="bg-brand-500 h-2 rounded-full" style={{ width: `${yuzde}%` }} />
-                  </div>
-                  <div className="space-y-1 text-xs text-slate-500">
-                    <div className="flex justify-between"><span>Metraj</span><span className="font-medium text-slate-700">{a.metraj.toLocaleString('tr-TR')} m²</span></div>
-                    <div className="flex justify-between"><span>Ciro</span><span className="font-medium text-green-700">{formatEuro(a.ciro)}</span></div>
-                  </div>
-                  {a.kalinlikDagilim.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <p className="text-xs text-slate-400 mb-1">Kalınlıklar</p>
-                      <div className="flex gap-1 flex-wrap">
-                        {a.kalinlikDagilim.map(k => (
-                          <span key={k.kalinlik} className="badge bg-slate-100 text-slate-600 text-xs">{k.kalinlik}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+      {/* FİYAT ORTALAMALARI */}
+      {aktifSekme === 'fiyat' && (
+        <div className="space-y-6">
+          <div className="card p-6">
+            <h2 className="font-semibold text-slate-800 mb-2">Kalınlık Bazlı Fiyat Ortalamaları</h2>
+            <p className="text-sm text-slate-500 mb-4">Kazanılan, kaybedilen ve devam eden projelerdeki ortalama birim fiyatlar (€/m²)</p>
+            {fiyatAnaliz.length === 0 ? (
+              <p className="text-center py-8 text-slate-400">Henüz fiyat verisi yok — proje eklerken birim fiyat girin</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalınlık</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Genel Ort.</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Min</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Max</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-green-700 uppercase">Kazanılan Ort.</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-red-600 uppercase">Kaybedilen Ort.</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-blue-600 uppercase">Devam Ort.</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalem</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fiyatAnaliz.map(k => (
+                      <tr key={k.kalinlik} className="hover:bg-slate-50">
+                        <td className="px-4 py-3"><span className="badge bg-brand-100 text-brand-800 font-semibold">{k.kalinlik}</span></td>
+                        <td className="px-4 py-3 text-right font-bold text-slate-900">{fmtFiyat(k.genelOrt)}</td>
+                        <td className="px-4 py-3 text-right text-slate-500">{fmtFiyat(k.genelMin)}</td>
+                        <td className="px-4 py-3 text-right text-slate-500">{fmtFiyat(k.genelMax)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-green-700">{fmtFiyat(k.kazanilanOrt)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-red-600">{fmtFiyat(k.kaybedilenOrt)}</td>
+                        <td className="px-4 py-3 text-right text-blue-600">{fmtFiyat(k.devamOrt)}</td>
+                        <td className="px-4 py-3 text-right text-slate-400 text-xs">{k.tumSayi}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
+
+          {/* Rakip marka bazında kaybedilen fiyatlar */}
+          <div className="card p-6">
+            <h2 className="font-semibold text-slate-800 mb-2">Rakip Bazında Kaybedilen Fiyat Ortalamaları</h2>
+            <p className="text-sm text-slate-500 mb-4">Hangi rakibe, hangi kalınlıkta, hangi ortalama fiyatla kaybedildi?</p>
+            {fiyatAnaliz.every(k => k.markaFiyat.length === 0) ? (
+              <p className="text-center py-8 text-slate-400">Kaybedilen proje verisi yok</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalınlık</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Rakip Marka</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kaybedilen Ort. Fiyat</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalem Sayısı</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fiyatAnaliz.flatMap(k =>
+                      k.markaFiyat.map(m => (
+                        <tr key={`${k.kalinlik}-${m.marka}`} className="hover:bg-slate-50">
+                          <td className="px-4 py-3"><span className="badge bg-brand-100 text-brand-800 font-semibold">{k.kalinlik}</span></td>
+                          <td className="px-4 py-3 font-medium text-slate-900">{m.marka}</td>
+                          <td className="px-4 py-3 text-right font-bold text-red-600">{fmtFiyat(m.ort)}</td>
+                          <td className="px-4 py-3 text-right text-slate-400">{m.sayi}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Kullanım alanı x kalınlık fiyat matrisi */}
+          {fiyatMatrisi.length > 0 && (
+            <div className="card p-6">
+              <h2 className="font-semibold text-slate-800 mb-2">Kullanım Alanı × Kalınlık Fiyat Matrisi</h2>
+              <p className="text-sm text-slate-500 mb-4">Ortalama birim fiyat (€/m²) — tüm projeler dahil</p>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kullanım Alanı</th>
+                      {KALINLIKLAR.map(k => (
+                        <th key={k} className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fiyatMatrisi.map(s => (
+                      <tr key={s.alan} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium text-slate-800">{s.alan}</td>
+                        {KALINLIKLAR.map(k => (
+                          <td key={k} className={`px-4 py-3 text-right text-sm ${s[k] ? 'font-semibold text-slate-900' : 'text-slate-300'}`}>
+                            {s[k] ? `€${(s[k] as number).toFixed(0)}` : '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -270,8 +389,8 @@ export default function RaporlarPage() {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Marka</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kaybedilen</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Pazar Payı</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kaybedilen Metraj</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kaybedilen Ciro</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Metraj</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Ciro</th>
                       <th className="px-4 py-3 w-32"></th>
                     </tr>
                   </thead>
@@ -298,40 +417,13 @@ export default function RaporlarPage() {
               </div>
             )}
           </div>
-          <div className="card p-6">
-            <h2 className="font-semibold text-slate-800 mb-4">Kaybedilen Proje Listesi</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-100">
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Proje</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kaybedilen Marka</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Metraj</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Ciro</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {kaybedilen.map(p => (
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium">{p.proje_adi}</td>
-                      <td className="px-4 py-3"><span className="badge bg-red-100 text-red-700">{p.kaybedilen_marka||'—'}</span></td>
-                      <td className="px-4 py-3 text-right text-sm">{p.metraj ? `${p.metraj.toLocaleString('tr-TR')} m²` : '—'}</td>
-                      <td className="px-4 py-3 text-right text-sm">{formatEuro(p.pot_ciro)}</td>
-                    </tr>
-                  ))}
-                  {kaybedilen.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">Kaybedilen proje yok</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       )}
 
       {/* KALINLIK */}
       {aktifSekme === 'kalinlik' && (
         <div className="card p-6">
-          <h2 className="font-semibold text-slate-800 mb-2">Kalınlık Bazlı Pazar Analizi</h2>
-          <p className="text-sm text-slate-500 mb-6">Proje kalemlerinin kalınlığa göre m² ve ciro payları</p>
+          <h2 className="font-semibold text-slate-800 mb-6">Kalınlık Bazlı Pazar Analizi</h2>
           {kalinlikAnaliz.length === 0 ? (
             <p className="text-center py-8 text-slate-400">Kalınlık bilgisi girilmiş kalem yok</p>
           ) : (
@@ -341,7 +433,7 @@ export default function RaporlarPage() {
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100">
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalınlık</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalem Sayısı</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Kalem</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Toplam Metraj</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Metraj Payı</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Pot. Ciro</th>
@@ -404,7 +496,6 @@ export default function RaporlarPage() {
               const sayi = projGrup.length
               if (sayi === 0) return null
               const yuzde = toplam > 0 ? Math.round((sayi/toplam)*100) : 0
-              const metraj = projGrup.reduce((t,p)=>t+(p.metraj||0),0)
               const ciro = projGrup.reduce((t,p)=>t+(p.pot_ciro||0),0)
               return (
                 <div key={durum} className="border border-slate-100 rounded-xl p-4">
@@ -415,7 +506,6 @@ export default function RaporlarPage() {
                     </div>
                     <div className="flex items-center gap-6 text-sm">
                       <span className="text-slate-500">{sayi} proje</span>
-                      <span className="text-slate-500">{metraj.toLocaleString('tr-TR')} m²</span>
                       <span className="font-medium text-green-700">{formatEuro(ciro)}</span>
                       <span className="font-bold text-slate-900 w-10 text-right">%{yuzde}</span>
                     </div>
