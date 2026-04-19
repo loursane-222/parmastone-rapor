@@ -5,10 +5,17 @@ import { createClient } from '@/lib/supabase/client'
 import { PROJECT_STATUS_LABELS } from '@/types'
 
 const MARKALAR = ['Laminam','Dekton','Neolith','Atlas','Materia','Infinity','Level','Saime','Massimo','Lamar','Inalco','Florim','Kale','Kütahya','Anatolia','Maxtone','Kuvars','Doğaltaş','Diğer']
-const KULLANIM_ALANLARI = ['Tezgah','Cephe','Zemin','İç Mekan','Banyo','Mutfak','Dış Mekan','Diğer']
+const KULLANIM_ALANLARI = ['Tezgah','Cephe','Zemin','Duvar','Mobilya','Banyo','Mutfak','Dış Mekan','Diğer']
 const KALINLIKLAR = ['20MM','12MM','5MM','3MM','2MM']
 const KONUT_TIPLERI = ['Daire','Villa','AVM','Ofis','Otel','Hastane','Okul','Endüstriyel','Diğer']
 const DURUMLAR = ['devam_ediyor','teklif_asamasinda','numune_asamasinda','karar_bekleniyor','kazanildi','kaybedildi','beklemede','iptal']
+
+interface ProjeKalemi {
+  kullanim_alani: string
+  kalinlik: string
+  metraj: string
+  birim_fiyat: string
+}
 
 export default function YeniProjePage() {
   const router = useRouter()
@@ -20,8 +27,6 @@ export default function YeniProjePage() {
     proje_adi: '', customer_id: '',
     proje_tipi: 'ticari', guncel_durum: 'devam_ediyor',
     konut_tipi: '', konut_sayisi: '',
-    kullanim_alani: '', kalinlik: '',
-    metraj: '', birim_fiyat: '',
     karar_verici: '', mimar: '', yuklenici: '',
     tahmini_kapanis_tarihi: '',
     teklif_verildi: false, numune_verildi: false, teknik_calisma_yapildi: false,
@@ -29,15 +34,31 @@ export default function YeniProjePage() {
     kazanilan_ciro: '', kazanilan_plaka: '', kazanilan_m2: '',
     notlar: ''
   })
+  const [kalemler, setKalemler] = useState<ProjeKalemi[]>([
+    { kullanim_alani: '', kalinlik: '', metraj: '', birim_fiyat: '' }
+  ])
 
   useEffect(() => {
     supabase.from('customers').select('id, firma_adi').order('firma_adi')
       .then(({ data }) => setMusteriler(data || []))
   }, [])
 
-  const projeToplam = (Number(form.metraj) || 0) * (Number(form.birim_fiyat) || 0)
-
   function guncelle(alan: string, deger: any) { setForm(f => ({ ...f, [alan]: deger })) }
+
+  function kalemGuncelle(idx: number, alan: keyof ProjeKalemi, deger: string) {
+    setKalemler(k => k.map((item, i) => i === idx ? { ...item, [alan]: deger } : item))
+  }
+
+  function kalemEkle() {
+    setKalemler(k => [...k, { kullanim_alani: '', kalinlik: '', metraj: '', birim_fiyat: '' }])
+  }
+
+  function kalemSil(idx: number) {
+    setKalemler(k => k.filter((_, i) => i !== idx))
+  }
+
+  const toplamTutar = kalemler.reduce((t, k) => t + (Number(k.metraj) || 0) * (Number(k.birim_fiyat) || 0), 0)
+  const toplamMetraj = kalemler.reduce((t, k) => t + (Number(k.metraj) || 0), 0)
 
   async function kaydet(e: React.FormEvent) {
     e.preventDefault()
@@ -45,17 +66,16 @@ export default function YeniProjePage() {
     setHata('')
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { error } = await supabase.from('projects').insert({
+
+    const gecerliKalemler = kalemler.filter(k => k.kullanim_alani)
+
+    const { data: proje, error } = await supabase.from('projects').insert({
       proje_adi: form.proje_adi,
       customer_id: form.customer_id || null,
       proje_tipi: form.proje_tipi,
       guncel_durum: form.guncel_durum,
       konut_tipi: form.konut_tipi || null,
       konut_sayisi: form.konut_sayisi ? Number(form.konut_sayisi) : null,
-      kullanim_alani: form.kullanim_alani || null,
-      kalinlik: form.kalinlik || null,
-      metraj: form.metraj ? Number(form.metraj) : null,
-      birim_fiyat: form.birim_fiyat ? Number(form.birim_fiyat) : null,
       sorumlu_id: user.id,
       karar_verici: form.karar_verici || null,
       mimar: form.mimar || null,
@@ -66,15 +86,29 @@ export default function YeniProjePage() {
       teknik_calisma_yapildi: form.teknik_calisma_yapildi,
       kaybedilen_marka: form.guncel_durum === 'kaybedildi' ? form.kaybedilen_marka : null,
       kazanilan_ciro: form.kazanilan_ciro ? Number(form.kazanilan_ciro) : null,
-      kazanilan_plaka: form.kazanilan_plaka ? Number(form.kazanilan_plaka) : null,
       kazanilan_m2: form.kazanilan_m2 ? Number(form.kazanilan_m2) : null,
-      pot_ciro: projeToplam || 0,
-      pot_m2: Number(form.metraj) || 0,
+      kazanilan_plaka: form.kazanilan_plaka ? Number(form.kazanilan_plaka) : null,
+      pot_ciro: toplamTutar,
+      pot_m2: toplamMetraj,
       pot_plaka: 0,
       notlar: form.notlar || null,
-    })
-    if (error) { setHata('Hata: ' + error.message); setYukleniyor(false) }
-    else { router.push('/dashboard/projeler') }
+    }).select().single()
+
+    if (error) { setHata('Hata: ' + error.message); setYukleniyor(false); return }
+
+    if (gecerliKalemler.length > 0 && proje) {
+      await supabase.from('project_items').insert(
+        gecerliKalemler.map(k => ({
+          project_id: proje.id,
+          kullanim_alani: k.kullanim_alani,
+          kalinlik: k.kalinlik || null,
+          metraj: Number(k.metraj) || 0,
+          birim_fiyat: Number(k.birim_fiyat) || 0,
+        }))
+      )
+    }
+
+    router.push('/dashboard/projeler')
   }
 
   return (
@@ -93,7 +127,7 @@ export default function YeniProjePage() {
               <input className="form-input" value={form.proje_adi} onChange={e => guncelle('proje_adi', e.target.value)} required placeholder="Örn: Ekinci İnşaat Torbalı" />
             </div>
             <div>
-              <label className="form-label">Bağlı Müşteri / Firma</label>
+              <label className="form-label">Bağlı Müşteri</label>
               <select className="form-input" value={form.customer_id} onChange={e => guncelle('customer_id', e.target.value)}>
                 <option value="">Seçin (opsiyonel)...</option>
                 {musteriler.map(m => <option key={m.id} value={m.id}>{m.firma_adi}</option>)}
@@ -136,25 +170,21 @@ export default function YeniProjePage() {
 
           {form.guncel_durum === 'kaybedildi' && (
             <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl">
-              <label className="form-label text-red-700">Hangi Markaya Kaybedildi? *</label>
-              <div className="grid grid-cols-4 gap-2 mt-2">
+              <label className="form-label text-red-700 mb-2 block">Hangi Markaya Kaybedildi? *</label>
+              <div className="grid grid-cols-4 gap-2">
                 {MARKALAR.map(m => (
-                  <button key={m} type="button"
-                    onClick={() => guncelle('kaybedilen_marka', m)}
+                  <button key={m} type="button" onClick={() => guncelle('kaybedilen_marka', m)}
                     className={`px-3 py-2 rounded-lg text-sm border transition-all ${form.kaybedilen_marka === m ? 'bg-red-600 text-white border-red-600 font-semibold' : 'bg-white text-slate-700 border-slate-200 hover:border-red-300'}`}>
                     {m}
                   </button>
                 ))}
               </div>
-              {form.kaybedilen_marka && (
-                <p className="mt-3 text-sm font-medium text-red-700">Seçilen: {form.kaybedilen_marka}</p>
-              )}
             </div>
           )}
 
           {form.guncel_durum === 'kazanildi' && (
             <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-xl">
-              <p className="text-sm font-semibold text-green-700 mb-3">🎉 Kazanılan Proje Detayları</p>
+              <p className="text-sm font-semibold text-green-700 mb-3">🎉 Kazanılan Detaylar</p>
               <div className="grid grid-cols-3 gap-4">
                 <div><label className="form-label">Kazanılan Ciro (€)</label><input type="number" className="form-input" value={form.kazanilan_ciro} onChange={e => guncelle('kazanilan_ciro', e.target.value)} /></div>
                 <div><label className="form-label">Kazanılan m²</label><input type="number" className="form-input" value={form.kazanilan_m2} onChange={e => guncelle('kazanilan_m2', e.target.value)} /></div>
@@ -162,43 +192,72 @@ export default function YeniProjePage() {
               </div>
             </div>
           )}
+
+          <div className="flex gap-6 mt-4">
+            {[['teklif_verildi','Teklif Verildi'],['numune_verildi','Numune Verildi'],['teknik_calisma_yapildi','Teknik Çalışma']].map(([alan, etiket]) => (
+              <label key={alan} className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form[alan as keyof typeof form] as boolean} onChange={e => guncelle(alan, e.target.checked)} className="w-4 h-4 rounded" />
+                <span className="text-sm text-slate-700">{etiket}</span>
+              </label>
+            ))}
+          </div>
         </div>
 
         <div className="card p-6">
-          <h2 className="font-semibold text-slate-800 mb-4">Ürün ve Metraj</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <label className="form-label">Kullanım Alanı</label>
-              <select className="form-input" value={form.kullanim_alani} onChange={e => guncelle('kullanim_alani', e.target.value)}>
-                <option value="">Seçin...</option>
-                {KULLANIM_ALANLARI.map(k => <option key={k} value={k}>{k}</option>)}
-              </select>
+              <h2 className="font-semibold text-slate-800">Kullanım Alanları ve Metraj</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Her kullanım alanı için ayrı kalınlık, metraj ve fiyat girebilirsiniz</p>
             </div>
-            <div>
-              <label className="form-label">Kalınlık</label>
-              <div className="flex gap-2 mt-1">
-                {KALINLIKLAR.map(k => (
-                  <button key={k} type="button"
-                    onClick={() => guncelle('kalinlik', k)}
-                    className={`flex-1 py-2 rounded-lg text-sm border transition-all ${form.kalinlik === k ? 'bg-brand-600 text-white border-brand-600 font-semibold' : 'bg-white text-slate-700 border-slate-200 hover:border-brand-300'}`}>
-                    {k}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="form-label">Metraj (m²)</label>
-              <input type="number" className="form-input" value={form.metraj} onChange={e => guncelle('metraj', e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label className="form-label">Birim Fiyat (€/m²)</label>
-              <input type="number" className="form-input" value={form.birim_fiyat} onChange={e => guncelle('birim_fiyat', e.target.value)} placeholder="0" />
-            </div>
+            <button type="button" onClick={kalemEkle} className="btn-secondary text-sm">+ Alan Ekle</button>
           </div>
-          {projeToplam > 0 && (
+
+          <div className="space-y-3">
+            {kalemler.map((k, idx) => (
+              <div key={idx} className="grid grid-cols-12 gap-2 items-end bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="col-span-3">
+                  {idx === 0 && <label className="form-label">Kullanım Alanı</label>}
+                  <select className="form-input" value={k.kullanim_alani} onChange={e => kalemGuncelle(idx, 'kullanim_alani', e.target.value)}>
+                    <option value="">Seçin...</option>
+                    {KULLANIM_ALANLARI.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  {idx === 0 && <label className="form-label">Kalınlık</label>}
+                  <select className="form-input" value={k.kalinlik} onChange={e => kalemGuncelle(idx, 'kalinlik', e.target.value)}>
+                    <option value="">Seçin...</option>
+                    {KALINLIKLAR.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  {idx === 0 && <label className="form-label">Metraj (m²)</label>}
+                  <input type="number" className="form-input" value={k.metraj} onChange={e => kalemGuncelle(idx, 'metraj', e.target.value)} placeholder="0" />
+                </div>
+                <div className="col-span-2">
+                  {idx === 0 && <label className="form-label">Birim Fiyat (€)</label>}
+                  <input type="number" className="form-input" value={k.birim_fiyat} onChange={e => kalemGuncelle(idx, 'birim_fiyat', e.target.value)} placeholder="0" />
+                </div>
+                <div className="col-span-2">
+                  {idx === 0 && <label className="form-label">Tutar (€)</label>}
+                  <div className="form-input bg-slate-100 text-slate-700 font-semibold">
+                    €{((Number(k.metraj)||0) * (Number(k.birim_fiyat)||0)).toLocaleString('tr-TR')}
+                  </div>
+                </div>
+                <div className="col-span-1 flex justify-center">
+                  {kalemler.length > 1 && (
+                    <button type="button" onClick={() => kalemSil(idx)} className="text-red-400 hover:text-red-600 text-lg font-bold">×</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {toplamTutar > 0 && (
             <div className="mt-4 p-4 bg-brand-50 rounded-xl flex items-center justify-between">
-              <span className="text-sm text-brand-700 font-medium">Hesaplanan Proje Tutarı</span>
-              <span className="text-xl font-bold text-brand-800">€{projeToplam.toLocaleString('tr-TR')}</span>
+              <div className="flex gap-6 text-sm">
+                <span className="text-brand-700">Toplam Metraj: <strong>{toplamMetraj.toLocaleString('tr-TR')} m²</strong></span>
+              </div>
+              <span className="text-xl font-bold text-brand-800">Toplam: €{toplamTutar.toLocaleString('tr-TR')}</span>
             </div>
           )}
         </div>
@@ -209,14 +268,6 @@ export default function YeniProjePage() {
             <div><label className="form-label">Karar Verici</label><input className="form-input" value={form.karar_verici} onChange={e => guncelle('karar_verici', e.target.value)} placeholder="Ad Soyad" /></div>
             <div><label className="form-label">Mimar</label><input className="form-input" value={form.mimar} onChange={e => guncelle('mimar', e.target.value)} /></div>
             <div className="col-span-2"><label className="form-label">Yüklenici</label><input className="form-input" value={form.yuklenici} onChange={e => guncelle('yuklenici', e.target.value)} /></div>
-          </div>
-          <div className="flex gap-6 mt-4">
-            {[['teklif_verildi','Teklif Verildi'],['numune_verildi','Numune Verildi'],['teknik_calisma_yapildi','Teknik Çalışma']].map(([alan, etiket]) => (
-              <label key={alan} className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form[alan as keyof typeof form] as boolean} onChange={e => guncelle(alan, e.target.checked)} className="w-4 h-4 rounded" />
-                <span className="text-sm text-slate-700">{etiket}</span>
-              </label>
-            ))}
           </div>
         </div>
 
